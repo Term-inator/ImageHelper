@@ -22,10 +22,10 @@ def load_images(image_folder):
 
 def load_media(folder):
     files = []
-    suffix = ['.jpg', '.JPG', '.png', '.PNG', '.heic', '.HEIC', '.mp4', '.MP4', '.mov', '.MOV', '.avi', '.AVI', '.m4v', '.M4V']
+    suffix = ['.jpg', '.JPG', '.png', '.PNG', '.heic', '.HEIC', '.mp4', '.MP4', '.mov', '.MOV', '.avi', '.AVI', '.m4v', '.M4V', '.gif', '.GIF']
     for filename in os.listdir(folder):
         if os.path.isdir(os.path.join(folder, filename)):
-            _files = load_images(os.path.join(folder, filename))
+            _files = load_media(os.path.join(folder, filename))
             files.extend(_files)
 
         for suf in suffix:
@@ -37,8 +37,13 @@ def load_media(folder):
 def read_images(image_files, mode='RGB'):
     images = []
     for image_file in image_files:
-        with Image.open(image_file) as img:
-            images.append(img.convert(mode))
+        try:
+            with Image.open(image_file) as img:
+                images.append(img.convert(mode))
+        except OSError as e:
+            print(f'Error: {e}')
+            print(f'Error file: {image_file}')
+            exit(1)
 
     return images
 
