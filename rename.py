@@ -77,10 +77,12 @@ def check(folder):
 
 
 if __name__ == '__main__':
-    folder = 'D:/csc/Pictures/2023-04-20'
-    files = utils.load_media(folder)
-    print(len(files))
-    for file in files:
-        rename(folder, file)
-    utils.del_empty_folder(folder)
-    print(check(folder))
+    folders = utils.load_folders()
+    for folder in folders:
+        print(f'path: {folder}')
+        files = utils.load_media(folder)
+        print(len(files))
+        for file in files:
+            rename(folder, file)
+        utils.del_empty_folder(folder)
+        print(check(folder))

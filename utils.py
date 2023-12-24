@@ -1,6 +1,8 @@
 import os
+import yaml
 from PIL import Image
 from pillow_heif import register_heif_opener
+from operator import itemgetter
 
 
 register_heif_opener()
@@ -67,3 +69,24 @@ def del_empty_folder(folder):
                     del_empty_folder(os.path.join(folder, filename))
     else:
         print(f'{folder} not exists')
+
+
+def load_folders():
+    with open('folders.yaml', 'r', encoding='utf-8') as f:
+        folders = yaml.load(f, Loader=yaml.FullLoader)
+
+    res = []
+
+    def dfs(folder, parent_path=''):
+        if 'folder' not in folder:
+            if os.path.exists(parent_path) and os.path.isdir(parent_path):
+                res.append(parent_path)
+            else:
+                print(f'{parent_path} not exists or not a folder')
+            return
+        for sub_folder in folder['folder']:
+            dfs(sub_folder, os.path.join(parent_path, sub_folder['name']))
+
+    dfs(folders)
+
+    return res
