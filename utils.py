@@ -6,11 +6,13 @@ from operator import itemgetter
 
 
 register_heif_opener()
+img_suffix = ['.jpg', '.JPG', '.png', '.PNG', '.heic', '.HEIC', '.heif', '.HEIF', '.jpeg', '.JPEG', '.webp', '.WEBP']
+video_suffix = ['.mp4', '.MP4', '.mov', '.MOV', '.avi', '.AVI', '.m4v', '.M4V', '.gif', '.GIF']
 
 
 def load_images(image_folder):
     image_files = []
-    suffix = ['.jpg', '.JPG', '.png', '.PNG', '.heic', '.HEIC', '.heif', '.HEIF']
+    suffix = img_suffix
     for filename in os.listdir(image_folder):
         if os.path.isdir(os.path.join(image_folder, filename)):
             _image_files = load_images(os.path.join(image_folder, filename))
@@ -24,7 +26,7 @@ def load_images(image_folder):
 
 def load_media(folder):
     files = []
-    suffix = ['.jpg', '.JPG', '.png', '.PNG', '.heic', '.HEIC', '.mp4', '.MP4', '.mov', '.MOV', '.avi', '.AVI', '.m4v', '.M4V', '.gif', '.GIF']
+    suffix = img_suffix + video_suffix
     for filename in os.listdir(folder):
         if os.path.isdir(os.path.join(folder, filename)):
             _files = load_media(os.path.join(folder, filename))
