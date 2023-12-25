@@ -32,10 +32,16 @@ def set_folder_time(folder_path, date_string):
 
 if __name__ == '__main__':
     # 替换以下路径为你要遍历的文件夹路径
-    # folder_path = "D:/csc/Pictures/2023-04-20"
-    file_path = r"D:\csc\Pictures\All\2023-12-23\2023\12\20231222_192203_Fri_99934.jpg"
+    # folder_path = r""
+
+    file_paths = [
+        r""
+    ]
 
     # 用指定的格式将字符串转换为 datetime 对象
-    date_string = "2023-09-09 19:48:00"
+    date_string = "2023-12-14 11:46:00"
 
-    set_file_time(file_path, date_string)
+    # set_folder_time(folder_path, date_string)
+
+    for file_path in file_paths:
+        set_file_time(file_path, date_string)

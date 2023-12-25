@@ -1,6 +1,6 @@
 # ImageHelper
 
-运行 dhash.py 进行图片去重，出现相似图片时，输入 index 选择一张删除，输入 n 跳过
+运行 similarity.py 进行图片去重，出现相似图片时，输入 index 选择一张删除，输入 n 跳过
 
 运行 rename.py 根据修改时间重命名图片
 
