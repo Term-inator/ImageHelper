@@ -2,11 +2,10 @@ import os
 import yaml
 from PIL import Image
 from pillow_heif import register_heif_opener
-from operator import itemgetter
 
 
 register_heif_opener()
-img_suffix = ['.jpg', '.JPG', '.png', '.PNG', '.heic', '.HEIC', '.heif', '.HEIF', '.jpeg', '.JPEG', '.webp', '.WEBP']
+img_suffix = ['.jpg', '.JPG', '.png', '.PNG', '.heic', '.HEIC', '.heif', '.HEIF', '.jpeg', '.JPEG', '.webp', '.WEBP', 'DNG', 'dng']
 video_suffix = ['.mp4', '.MP4', '.mov', '.MOV', '.avi', '.AVI', '.m4v', '.M4V', '.gif', '.GIF']
 
 
@@ -73,8 +72,8 @@ def del_empty_folder(folder):
         print(f'{folder} not exists')
 
 
-def load_folders():
-    with open('folders.yaml', 'r', encoding='utf-8') as f:
+def load_folders(config_file='folders.yaml'):
+    with open(config_file, 'r', encoding='utf-8') as f:
         folders = yaml.load(f, Loader=yaml.FullLoader)
 
     res = []
