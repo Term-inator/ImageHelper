@@ -5,50 +5,12 @@ import random
 
 from PIL import Image
 from pathlib import Path
-import exiftool
 
 import utils
 
 
 def get_media_format(file_path):
     return Path(file_path).suffix[1:]
-
-
-def get_content_uuid(file):
-    """获取 Live Photo 的 MediaGroupUUID"""
-    with exiftool.ExifTool() as et:
-        metadata = et.get_metadata(file)
-        uuid = metadata.get("QuickTime:ContentIdentifier") or metadata.get("MakerNotes:ContentIdentifier")
-        # IOS 16 以下可能会是 MediaGroupUUID，不确定
-        return uuid
-
-
-# before rename, get the file map
-def get_file_map(files):
-    # files: file list under the same folder
-    file_map = {
-        '': []  # files without UUID
-    }  # UUID: [file1, file2, ...]
-
-    for file in files:
-        content_uuid = get_content_uuid(file)
-        if content_uuid:
-            if content_uuid not in file_map:
-                file_map[content_uuid] = []
-            file_map[content_uuid].append(file)
-        else:
-            file_map[''].append(file)
-
-    # check if files with the same UUID have the same last modified time
-    for content_uuid, file_list in file_map.items():
-        if content_uuid == '':
-            continue
-        last_modified_time = os.stat(file_list[0]).st_mtime
-        for file in file_list:
-            if os.stat(file).st_mtime != last_modified_time:
-                print(f'Warning: {file} has different last modified time')
-
-    return file_map
 
 
 def generate_new_file_folder_and_name(folder, file):
@@ -105,6 +67,7 @@ def rename(folder, file_map):
                 os.remove(file)
 
 
+# 仅仅检查文件所在文件夹是否符合其last modified time，没有检查live图片的jpg和mov是否一一对应
 def check(folder):
     suffix = ['.jpg', '.JPG', '.png', '.PNG', '.heic', '.HEIC']
     for year in os.listdir(folder):
@@ -139,7 +102,7 @@ if __name__ == '__main__':
         print(f'path: {folder}')
         files = utils.load_media(folder)
         print(len(files))
-        name_map = get_file_map(files)
+        name_map = utils.get_file_map(files)
         rename(folder, name_map)
         utils.del_empty_folder(folder)
         print(check(folder))

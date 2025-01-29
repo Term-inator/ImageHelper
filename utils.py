@@ -2,6 +2,8 @@ import os
 import yaml
 from PIL import Image
 from pillow_heif import register_heif_opener
+import exiftool
+from pathlib import Path
 
 
 register_heif_opener()
@@ -51,12 +53,13 @@ def read_images(image_files, mode='RGB'):
     return images
 
 
-def del_image(image_file):
-    print('delete', image_file)
-    if os.path.exists(image_file):
-        os.remove(image_file)
-    else:
-        print(f'{image_file} not exists')
+def del_image(image_file: str):
+    filename = Path(image_file).stem
+    folder = os.path.dirname(image_file)
+    for file in os.listdir(folder):
+        if file.startswith(filename):
+            print('delete', file)
+            os.remove(os.path.join(folder, file))
 
 
 def del_empty_folder(folder):
@@ -91,3 +94,40 @@ def load_folders(config_file='folders.yaml'):
     dfs(folders)
 
     return res
+
+
+def get_content_uuid(file):
+    """获取 Live Photo 的 MediaGroupUUID"""
+    with exiftool.ExifTool() as et:
+        metadata = et.get_metadata(file)
+        uuid = metadata.get("QuickTime:ContentIdentifier") or metadata.get("MakerNotes:ContentIdentifier")
+        # IOS 16 以下可能会是 MediaGroupUUID，不确定
+        return uuid
+
+
+# before rename, get the file map
+def get_file_map(files):
+    # files: file list under the same folder
+    file_map = {
+        '': []  # files without UUID
+    }  # UUID: [file1, file2, ...]
+
+    for file in files:
+        content_uuid = get_content_uuid(file)
+        if content_uuid:
+            if content_uuid not in file_map:
+                file_map[content_uuid] = []
+            file_map[content_uuid].append(file)
+        else:
+            file_map[''].append(file)
+
+    # check if files with the same UUID have the same last modified time
+    for content_uuid, file_list in file_map.items():
+        if content_uuid == '':
+            continue
+        last_modified_time = os.stat(file_list[0]).st_mtime
+        for file in file_list:
+            if os.stat(file).st_mtime != last_modified_time:
+                print(f'Warning: {file} has different last modified time')
+
+    return file_map

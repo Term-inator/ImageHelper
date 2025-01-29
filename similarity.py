@@ -9,7 +9,7 @@ plt.rcParams['font.sans-serif'] = ['SimHei']
 
 
 def remove_similar_images(folder):
-    image_files = utils.load_images(folder)
+    image_files: [str] = utils.load_images(folder)
     images = utils.read_images(image_files, mode='L')
 
     print(len(image_files))
@@ -59,5 +59,8 @@ def remove_similar_images(folder):
             utils.del_image(image_file_lst[int(rm)][0])
 
 
-folder = r"D:\csc\Pictures\All"
-remove_similar_images(folder)
+# run after rename.py !!!!!!!!
+if __name__ == '__main__':
+    # folder = r"D:\csc\Pictures\All"
+    folder = r"D:\csc\Pictures\test"
+    remove_similar_images(folder)
