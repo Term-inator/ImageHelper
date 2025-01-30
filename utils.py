@@ -1,14 +1,17 @@
+import nt
 import os
+
 import yaml
 from PIL import Image
 from pillow_heif import register_heif_opener
 import exiftool
 from pathlib import Path
+from enum import Enum
 
 
 register_heif_opener()
-img_suffix = ['.jpg', '.JPG', '.png', '.PNG', '.heic', '.HEIC', '.heif', '.HEIF', '.jpeg', '.JPEG', '.webp', '.WEBP', 'DNG', 'dng']
-video_suffix = ['.mp4', '.MP4', '.mov', '.MOV', '.avi', '.AVI', '.m4v', '.M4V', '.gif', '.GIF']
+img_suffix = ('.jpg', '.JPG', '.png', '.PNG', '.heic', '.HEIC', '.heif', '.HEIF', '.jpeg', '.JPEG', '.webp', '.WEBP', 'DNG', 'dng')
+video_suffix = ('.mp4', '.MP4', '.mov', '.MOV', '.avi', '.AVI', '.m4v', '.M4V', '.gif', '.GIF')
 
 
 def load_images(image_folder):
@@ -37,6 +40,27 @@ def load_media(folder):
             if filename.endswith(suf):
                 files.append(os.path.join(folder, filename))
     return files
+
+
+def load_media_batch(folder, batch_size=64):
+    suffix = img_suffix + video_suffix
+    batch = []
+
+    with os.scandir(folder) as entries:
+        for file_entry in entries:
+            if file_entry.is_dir():
+                yield from load_media_batch(file_entry.path, batch_size)  # 递归处理子目录
+            elif file_entry.is_file() and file_entry.name.endswith(suffix):
+                batch.append(file_entry)  # 直接存储 DirEntry 对象
+
+                # 当 batch_size 达到上限时，yield 一次
+                if len(batch) >= batch_size:
+                    yield batch
+                    batch = []  # 清空 batch
+
+    # 处理最后一批不足 batch_size 的文件
+    if batch:
+        yield batch
 
 
 def read_images(image_files, mode='RGB'):
@@ -96,38 +120,53 @@ def load_folders(config_file='folders.yaml'):
     return res
 
 
-def get_content_uuid(file):
-    """获取 Live Photo 的 MediaGroupUUID"""
+def get_metadata(file: nt.DirEntry):
     with exiftool.ExifTool() as et:
-        metadata = et.get_metadata(file)
-        uuid = metadata.get("QuickTime:ContentIdentifier") or metadata.get("MakerNotes:ContentIdentifier")
+        metadata = et.get_metadata(file.path)
+        return metadata
+
+
+def is_live_photo(file: nt.DirEntry):
+    with exiftool.ExifTool() as et:
+        return et.get_tag("QuickTime:LivePhotoAuto", file.path) == 1
+
+
+def get_content_uuid(file: nt.DirEntry):
+    with exiftool.ExifTool() as et:
+        uuid = et.get_tag("QuickTime:ContentIdentifier", file.path) or et.get_tag("MakerNotes:ContentIdentifier", file.path)
         # IOS 16 以下可能会是 MediaGroupUUID，不确定
         return uuid
 
 
-# before rename, get the file map
-def get_file_map(files):
-    # files: file list under the same folder
-    file_map = {
-        '': []  # files without UUID
-    }  # UUID: [file1, file2, ...]
+class FileType(Enum):
+    IMAGE = 0
+    VIDEO = 1
+    LIVE_PHOTO = 2
 
-    for file in files:
-        content_uuid = get_content_uuid(file)
+
+# before rename, get the file map
+def get_file_entry_map(entries: [nt.DirEntry]):
+    # entries: entry list under the same folder
+    file_entry_map = {
+        '': []  # files without UUID
+    }  # UUID: [entry1, entry2, ...]
+
+    for file_entry in entries:
+        content_uuid = get_content_uuid(file_entry)
         if content_uuid:
-            if content_uuid not in file_map:
-                file_map[content_uuid] = []
-            file_map[content_uuid].append(file)
+            if content_uuid not in file_entry_map:
+                file_entry_map[content_uuid] = []
+            file_entry_map[content_uuid].append(file_entry)
         else:
-            file_map[''].append(file)
+            file_entry_map[''].append(file_entry)
 
     # check if files with the same UUID have the same last modified time
-    for content_uuid, file_list in file_map.items():
+    for content_uuid, file_entry_list in file_entry_map.items():
         if content_uuid == '':
             continue
-        last_modified_time = os.stat(file_list[0]).st_mtime
-        for file in file_list:
-            if os.stat(file).st_mtime != last_modified_time:
-                print(f'Warning: {file} has different last modified time')
+        last_modified_time = os.stat(file_entry_list[0]).st_mtime
+        for file_entry in file_entry_list:
+            if os.stat(file_entry).st_mtime != last_modified_time:
+                print(f'Warning: {file_entry} has different last modified time')
 
-    return file_map
+    return file_entry_map

@@ -1,5 +1,5 @@
+import nt
 import os
-import time
 from datetime import datetime
 import random
 
@@ -9,13 +9,12 @@ from pathlib import Path
 import utils
 
 
-def get_media_format(file_path):
-    return Path(file_path).suffix[1:]
+def get_media_format(file_entry: nt.DirEntry):
+    return Path(file_entry.path).suffix[1:]
 
 
-def generate_new_file_folder_and_name(folder, file):
-    last_modified_time = time.ctime(os.stat(file).st_mtime)
-    dt = datetime.strptime(last_modified_time, '%a %b %d %H:%M:%S %Y')
+def generate_new_file_folder_and_name(folder, file_entry: nt.DirEntry):
+    dt = datetime.fromtimestamp(file_entry.stat().st_mtime)
 
     # 格式为 YYYYMMDD_HHMMSS_DAY_RND.PNG
     year = dt.strftime("%Y")
@@ -33,76 +32,108 @@ print(Image.EXTENSION)
 unsupported_format = ['HEIF', 'HEIC']
 
 
-def rename(folder, file_map):
-    for content_uuid, file_list in file_map.items():
-        if len(file_list) == 0:
-            continue
-        new_folder, new_name = generate_new_file_folder_and_name(folder, file_list[0])
-        for file in file_list:
+def rename(folder, file_entry_map):
+    for content_uuid, file_entry_list in list(file_entry_map.items()):
+        # file_entry_list: [nt.DirEntry, nt.DirEntry, ...]
+        if content_uuid != '':
+            if len(file_entry_list) <= 1:
+                continue
+            new_folder, new_name = generate_new_file_folder_and_name(folder, file_entry_list[0])
+
+        for file_entry in file_entry_list:
             if content_uuid == '':
-                new_folder, new_name = generate_new_file_folder_and_name(folder, file)
+                new_folder, new_name = generate_new_file_folder_and_name(folder, file_entry)
 
             if not os.path.exists(new_folder):
                 os.makedirs(new_folder)
 
-            suffix = Path(file).suffix
-            media_format = get_media_format(file)
+            suffix = Path(file_entry.path).suffix
+            media_format = get_media_format(file_entry)
             if media_format in unsupported_format:
                 suffix = '.jpg'
 
             new_name_with_suffix = new_name + suffix
 
             # 如果文件所在位置和文件名已经符合要求，就不操作
-            if (os.path.dirname(file) == new_folder and os.path.basename(file)[0:19] ==
-                    new_name and media_format not in unsupported_format):
+            if (os.path.dirname(file_entry.path) == new_folder and file_entry.name[0:19] ==
+                    new_name[0:19] and media_format not in unsupported_format):
                 continue
 
             if media_format not in unsupported_format:
-                os.rename(file, os.path.join(new_folder, new_name_with_suffix))
+                os.rename(file_entry.path, os.path.join(new_folder, new_name_with_suffix))
             else:
-                with Image.open(file) as img:
-                    img.save(os.path.join(new_folder, new_name_with_suffix))  # 转换图片格式
+                with Image.open(file_entry.path) as img:
+                    exif_data = img.info.get('exif')
+                    img.save(os.path.join(new_folder, new_name_with_suffix), exif=exif_data)  # 转换为jpg格式
                 # 设置修改时间为原文件的修改时间
-                os.utime(os.path.join(new_folder, new_name_with_suffix), (os.stat(file).st_atime, os.stat(file).st_mtime))
-                os.remove(file)
+                os.utime(os.path.join(new_folder, new_name_with_suffix), (file_entry.stat().st_atime, file_entry.stat().st_mtime))
+                os.remove(file_entry.path)
+
+        del file_entry_map[content_uuid]
 
 
 # 仅仅检查文件所在文件夹是否符合其last modified time，没有检查live图片的jpg和mov是否一一对应
 def check(folder):
-    suffix = ['.jpg', '.JPG', '.png', '.PNG', '.heic', '.HEIC']
-    for year in os.listdir(folder):
-        if os.path.isdir(os.path.join(folder, year)):
-            for month in os.listdir(os.path.join(folder, year)):
-                for file in os.listdir(os.path.join(folder, year, month)):
-                    file_path = os.path.join(folder, year, month, file)
-                    if os.path.isdir(file_path):
-                        print(f'{file_path} is a folder')
-                        return False
-                    last_modified_time = time.ctime(os.stat(file_path).st_mtime)
-                    dt = datetime.strptime(last_modified_time, '%a %b %d %H:%M:%S %Y')
-                    for suf in suffix:
-                        if file_path.endswith(suf):
-                            break
-                    else:
+    suffix = ('.jpg', '.JPG', '.png', '.PNG', '.heic', '.HEIC')
+
+    with os.scandir(folder) as years:
+        for year_entry in years:
+            if not year_entry.is_dir():  # 确保是年份文件夹
+                continue
+
+            with os.scandir(year_entry.path) as months:
+                for month_entry in months:
+                    if not month_entry.is_dir():  # 确保是月份文件夹
                         continue
-                    img_format = get_media_format(file_path)
-                    if img_format in unsupported_format:
-                        print(f'{file_path} is not supported')
-                        return False
-                    if os.path.dirname(file_path) != os.path.join(folder, year, month) or \
-                            os.path.basename(file)[0:19] != f'{dt.strftime("%Y%m%d_%H%M%S")}_{dt.strftime("%a")}':
-                        print(f'{file_path} is not correct')
-                        return False
-    return True
+
+                    with os.scandir(month_entry.path) as files:
+                        for file_entry in files:
+                            file_path = file_entry.path
+
+                            if file_entry.is_dir():  # 发现子文件夹
+                                print(f'{file_path} is a folder')
+                                return False
+
+                            # 获取修改时间
+                            dt = datetime.fromtimestamp(file_entry.stat().st_mtime)
+
+                            # 检查文件后缀
+                            if not file_entry.name.endswith(suffix):
+                                continue
+
+                            # 获取文件格式
+                            img_format = get_media_format(file_entry)
+                            if img_format in unsupported_format:
+                                print(f'{file_path} is not supported')
+                                return False
+
+                            # 检查文件路径和命名是否符合规范
+                            expected_dir = os.path.join(folder, year_entry.name, month_entry.name)
+                            expected_prefix = f'{dt.strftime("%Y%m%d_%H%M%S")}_{dt.strftime("%a")}'
+
+                            if os.path.dirname(file_path) != expected_dir or not file_entry.name.startswith(expected_prefix):
+                                print(f'{file_path} is not correct')
+                                return False
+
+    return True  # 所有文件都符合要求
 
 
 if __name__ == '__main__':
-    folders = utils.load_folders('fd_test.yaml')
+    folders = utils.load_folders('folders.yaml')
     for folder in folders:
         print(f'path: {folder}')
-        files = utils.load_media(folder)
-        print(len(files))
-        name_map = utils.get_file_map(files)
-        rename(folder, name_map)
-        utils.del_empty_folder(folder)
+        file_entry_map = {
+            '': []  # files without UUID
+        }  # UUID: [file1, file2, ...]
+        batch_num = 0
+        for batch in utils.load_media_batch(folder, 64):
+            print(f'batch {batch_num}, size {len(batch)}')
+            file_entry_map_batch = utils.get_file_entry_map(batch)
+            for uuid, files in file_entry_map_batch.items():
+                if uuid not in file_entry_map:
+                    file_entry_map[uuid] = []
+                file_entry_map[uuid].extend(files)
+            rename(folder, file_entry_map)
+            utils.del_empty_folder(folder)
+            batch_num += 1
         print(check(folder))
