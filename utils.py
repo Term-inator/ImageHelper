@@ -8,6 +8,7 @@ import exiftool
 from pathlib import Path
 from enum import Enum
 
+from sklearn.utils import deprecated
 
 register_heif_opener()
 img_suffix = ('.jpg', '.JPG', '.png', '.PNG', '.heic', '.HEIC', '.heif', '.HEIF', '.jpeg', '.JPEG', '.webp', '.WEBP', 'DNG', 'dng')
@@ -28,6 +29,7 @@ def load_images(image_folder):
     return image_files
 
 
+# 建议使用 load_media_batch
 def load_media(folder):
     files = []
     suffix = img_suffix + video_suffix
@@ -63,6 +65,7 @@ def load_media_batch(folder, batch_size=64):
         yield batch
 
 
+# deprecated: similarity 比较不再加载所有图片
 def read_images(image_files, mode='RGB'):
     images = []
     for image_file in image_files:
