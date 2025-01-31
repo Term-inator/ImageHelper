@@ -1,7 +1,7 @@
 import nt
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 import random
 
 from PIL import Image
@@ -15,7 +15,7 @@ def get_media_format(file_entry: nt.DirEntry):
 
 
 def generate_new_file_folder_and_name(folder, file_entry: nt.DirEntry):
-    dt = datetime.fromtimestamp(file_entry.stat().st_mtime, tz=timezone.utc)
+    dt = datetime.fromtimestamp(file_entry.stat().st_mtime)
 
     # 格式为 YYYYMMDD_HHMMSS_DAY_RND.PNG
     year = dt.strftime("%Y")
@@ -56,9 +56,9 @@ def rename(folder, file_entry_map):
             new_name_with_suffix = new_name + suffix
 
             # 如果文件所在位置和文件名已经符合要求，就不操作
-            # if (os.path.dirname(file_entry.path) == new_folder and file_entry.name[0:19] ==
-            #         new_name[0:19] and media_format not in unsupported_format):
-            #     continue
+            if (os.path.dirname(file_entry.path) == new_folder and file_entry.name[0:19] ==
+                    new_name[0:19] and media_format not in unsupported_format):
+                continue
 
             if media_format not in unsupported_format:
                 os.rename(file_entry.path, os.path.join(new_folder, new_name_with_suffix))
@@ -97,7 +97,7 @@ def check(folder):
                                 return False
 
                             # 获取修改时间
-                            dt = datetime.fromtimestamp(file_entry.stat().st_mtime, tz=timezone.utc)
+                            dt = datetime.fromtimestamp(file_entry.stat().st_mtime)
 
                             # 检查文件后缀
                             if not file_entry.name.endswith(suffix):
@@ -128,7 +128,7 @@ if __name__ == '__main__':
             '': []  # files without UUID
         }  # UUID: [file1, file2, ...]
         batch_num = 0
-        for batch in utils.load_media_batch(folder, 64):
+        for batch in utils.load_media_batch(folder, 64, all_files=False):
             print(f'batch {batch_num}, size {len(batch)}')
             file_entry_map_batch = utils.get_file_entry_map(batch)
             for uuid, files in file_entry_map_batch.items():
@@ -140,25 +140,35 @@ if __name__ == '__main__':
             batch_num += 1
 
         # 如果还有文件没有处理，说明有 UUID 的图片或者视频没有匹配到
-        # 如果是视频，说明 live photo 的图片丢失，严重错误
-        # 如果是图片，说明有图片没有匹配到视频，轻微错误，把这些图片放 file_entry_map[''] 里当作普通图片处理
+        error_files = []
+        unprocessed_files = []
         if len(file_entry_map.keys()) > 1:
             print(f'Error: {len(file_entry_map.keys())} UUIDs left')
-            file_entry_map[''] = []
             for uuid, files in list(file_entry_map.items()):
                 if uuid == '':
-                    continue
+                    raise ValueError("Error: Image without UUID should not be left")
                 print(f'UUID: {uuid}, files: {len(files)}')
+                # 如果只有一个文件，且是视频，说明 live photo 的图片或者视频丢失
                 if len(files) == 1:
+                    # 如果是视频，说明 live photo 的图片丢失，严重错误
                     if files[0].name.endswith(utils.video_suffix):
-                        raise ValueError('Error: live photo image lost')
-                    file_entry_map[''].extend(files)
+                        print(files[0].name)
+                        error_files.append(files[0].name)
+                    # 如果是图片，说明有图片没有匹配到视频，轻微错误，把这些图片放 file_entry_map[''] 里当作普通图片处理
+                    else:
+                        unprocessed_files.extend(files)
                     del file_entry_map[uuid]
                 else:
                     print(f'Error: {uuid} has {len(files)} files')
                     for file in files:
                         print(file.name)
                     raise ValueError('Error: UUID has multiple files')
+            file_entry_map[''] = unprocessed_files
             rename(folder, file_entry_map)
+
+        if len(error_files) > 0:
+            print(f'Error: {len(error_files)} videos are missing')
+            for file in error_files:
+                print(file)
 
         print(check(folder))

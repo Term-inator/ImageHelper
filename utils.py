@@ -1,15 +1,14 @@
 import nt
 import os
+import re
 
 import rawpy
 import yaml
 from PIL import Image
 from pillow_heif import register_heif_opener
 import exiftool
-from pathlib import Path
 from enum import Enum
 
-from sklearn.utils import deprecated
 
 register_heif_opener()
 img_suffix = ('.jpg', '.JPG', '.png', '.PNG', '.heic', '.HEIC', '.heif', '.HEIF', '.jpeg', '.JPEG', '.webp', '.WEBP')
@@ -46,21 +45,36 @@ def load_media(folder):
     return files
 
 
-def load_media_batch(folder, batch_size=64):
+def load_media_batch(folder, batch_size=64, all_files=False):
+    # all_files: 是否加载所有文件，False 时不加载已经处理过的文件（存放于 year/month 文件夹下）
     suffix = img_suffix + video_suffix + raw_img_suffix
     batch = []
+
+    def yield_batches():
+        """ 每次确保 `yield` 出来的 batch 维持在 `batch_size` """
+        nonlocal batch
+        while len(batch) >= batch_size:
+            yield batch[:batch_size]  # `yield` 出 `batch_size` 个文件
+            batch = batch[batch_size:]  # 保留剩余的部分
 
     with os.scandir(folder) as entries:
         for file_entry in entries:
             if file_entry.is_dir():
-                continue
+                if not all_files:
+                    continue
+                if re.match(r'\d{4}', file_entry.name):
+                    year = re.match(r'\d{4}', file_entry.name).group()
+                    subfolder = os.path.join(folder, year)
+                    for sub_batch in load_media_batch(subfolder, batch_size, all_files):
+                        batch.extend(sub_batch)
+                elif re.match(r'\d{2}', file_entry.name):
+                    month = re.match(r'\d{2}', file_entry.name).group()
+                    subfolder = os.path.join(folder, month)
+                    for sub_batch in load_media_batch(subfolder, batch_size, all_files):
+                        batch.extend(sub_batch)
             elif file_entry.is_file() and file_entry.name.endswith(suffix):
                 batch.append(file_entry)  # 直接存储 DirEntry 对象
-
-                # 当 batch_size 达到上限时，yield 一次
-                if len(batch) >= batch_size:
-                    yield batch
-                    batch = []  # 清空 batch
+            yield from yield_batches()
 
     # 处理最后一批不足 batch_size 的文件
     if batch:
@@ -112,10 +126,10 @@ def load_folders(config_file='folders.yaml'):
 
     def dfs(folder, parent_path=''):
         if 'folder' not in folder:
-            if os.path.exists(parent_path) and os.path.isdir(parent_path):
-                res.append(parent_path)
-            else:
-                print(f'{parent_path} not exists or not a folder')
+            # if os.path.exists(parent_path) and os.path.isdir(parent_path):
+            #     res.append(parent_path)
+            # else:
+            #     print(f'{parent_path} not exists or not a folder')
             return
         for sub_folder in folder['folder']:
             res.append(os.path.join(parent_path, sub_folder['name']))
