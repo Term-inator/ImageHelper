@@ -109,7 +109,7 @@ def query_similar_images(image_entries: [nt.DirEntry], cache, compare_old_images
         for candidate in candidates:
             if candidate != entry and candidate not in checked_images:
                 dist = hamming_distance(hash_db[entry], hash_db[candidate])
-                if dist <= 1:  # 设定 pHash 相似度阈值
+                if dist <= 2:  # 设定 pHash 相似度阈值
                     similar_images.append((candidate, dist))
                     checked_images.add(candidate)
 
@@ -124,7 +124,7 @@ def remove_similar_images(folder, similar_images):
     for image_entry_lst in similar_images:
         n = len(image_entry_lst)
         # 展示全部图片，一行两张
-        plt.figure(figsize=(20, 14))
+        fig = plt.figure(figsize=(20, 14))
         for index, (image_entry, diff) in enumerate(image_entry_lst):
             plt.subplot((n+1) // 2, 2, index+1)
             try:
@@ -139,13 +139,20 @@ def remove_similar_images(folder, similar_images):
             if len(path_display) > 50:
                 path_display = path_display[:50] + '\n' + path_display[50:]
             plt.title(f'{path_display} \n diff:{diff} index:{index}', fontsize=20)
-        plt.show()
+        plt.show(block=False)
+        # 获取 Tkinter 窗口并修改属性
         rm_lst = input('remove list: ')
+
         if rm_lst == 'n':  # 不删除
             continue
         rm_lst = rm_lst.split()
         for rm in rm_lst:
-            utils.del_image(image_entry_lst[int(rm)][0])
+            utils.del_image_dry_run(image_entry_lst[int(rm)][0])
+        confirm = input('confirm? (Y/n): ')
+        plt.close()
+        if confirm != 'n' and confirm != 'N':
+            for rm in rm_lst:
+                utils.del_image(image_entry_lst[int(rm)][0])
 
 
 # run after rename.py !!!!!!!!
@@ -157,7 +164,7 @@ if __name__ == '__main__':
     image_entries = utils.load_images(folder)
 
     try:
-        similar_images = query_similar_images(image_entries, cache, compare_old_images=False)
+        similar_images = query_similar_images(image_entries, cache, compare_old_images=True)
     except Exception:
         save_cache(cache_file, cache)  # 保存缓存
         raise
@@ -169,5 +176,5 @@ if __name__ == '__main__':
         del cache[image]
 
     save_cache(cache_file, cache)  # 保存缓存
-    print(similar_images)
+    print(f'Found {len(similar_images)} similar groups')
     remove_similar_images(folder, similar_images)

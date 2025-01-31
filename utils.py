@@ -1,6 +1,7 @@
 import nt
 import os
 import re
+from pathlib import Path
 
 import rawpy
 import yaml
@@ -96,14 +97,23 @@ def read_images(image_files, mode='RGB'):
     return images
 
 
-def del_image(image_entry: nt.DirEntry):
-    filename = image_entry.name
+def del_image_dry_run(image_entry: nt.DirEntry):
+    filename = Path(image_entry.name).stem
     folder = os.path.dirname(image_entry.path)
-    for file in os.listdir(folder):
-        if file.startswith(filename):
-            print('delete', file)
-            os.remove(os.path.join(folder, file))
+    with os.scandir(folder) as entries:
+        for entry in entries:
+            if entry.name.startswith(filename):
+                print('delete', entry.name)
 
+
+def del_image(image_entry: nt.DirEntry):
+    filename = Path(image_entry.name).stem
+    folder = os.path.dirname(image_entry.path)
+    with os.scandir(folder) as entries:
+        for entry in entries:
+            if entry.name.startswith(filename):
+                print('delete', entry.name)
+                os.remove(entry.path)
 
 def del_empty_folder(folder):
     if os.path.exists(folder):
