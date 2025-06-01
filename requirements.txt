@@ -1,0 +1,8 @@
+datasketch==1.6.5
+ImageHash==4.3.1
+matplotlib==3.10.0
+numpy==2.2.5
+pillow==11.1.0
+pillow_heif==0.22.0
+PyExifTool==0.4.13
+rawpy==0.25.0
