@@ -1,13 +1,17 @@
 import nt
 import os
 import re
+from collections import deque
 from pathlib import Path
+from datetime import datetime, timezone
+from typing import cast, Self
+from zoneinfo import ZoneInfo
 
 import rawpy
 import yaml
 from PIL import Image
 from pillow_heif import register_heif_opener
-import exiftool
+import exiftool # PyExifTool==0.4.13
 from enum import Enum
 
 
@@ -128,32 +132,211 @@ def del_empty_folder(folder):
         print(f'{folder} not exists')
 
 
-def load_folders(config_file='folders.yaml'):
+class TimeRange:
+    """
+    表示一个时间范围，包含起始时间和结束时间
+    """
+    def __init__(self, from_time: datetime | None, to_time: datetime | None):
+        self.from_time = from_time
+        self.to_time = to_time
+
+        # 如果 from_time 为 None，设置为最小的 UTC 时间
+        if self.from_time is None:
+            self.from_time = datetime.min.replace(tzinfo=timezone.utc)
+
+        # 如果 to_time 为 None，设置为最大的 UTC 时间
+        if self.to_time is None:
+            self.to_time = datetime.max.replace(tzinfo=timezone.utc)
+
+    def contains(self, dt: datetime) -> bool:
+        """
+        检查一个 datetime 是否在时间范围内
+        """
+        if dt < self.from_time:
+            return False
+        if dt > self.to_time:
+            return False
+        return True
+
+    def __str__(self):
+        return f"{self.from_time.isoformat()} - {self.to_time.isoformat()}"
+
+    def __repr__(self):
+        return self.__str__()
+
+
+class ZoneRange:
+    """
+    表示一个时区范围，包含时区名称、时间范围列表和保存时转换为的时区
+    含义为在这些时间范围内是该时区的时间，按该时区读取图片，并转换为指定的时区（如果有的话）
+    """
+    def __init__(self, name, ranges: list[dict], save_as=None):
+        self.name = name # 时区名称
+        self.ranges = [TimeRange(r.get('from'), r.get('to')) for r in ranges] if ranges else [] # 时间范围列表
+        self.save_as = save_as # 保存时转换为的时区，如果没有则不转换
+
+    def matches(self, dt: datetime) -> bool:
+        """
+        判断指定的 datetime 是否匹配该时区范围
+        """
+        if not self.ranges:
+            return True
+
+        # 如果 datetime 没有时区信息，则假设是当前时区
+        _dt = dt
+        if _dt.tzinfo is None:
+            _dt = _dt.replace(tzinfo=ZoneInfo(self.name))
+
+        # 遍历所有的时间范围，检查是否包含该 datetime
+        for time_range in self.ranges:
+            if time_range.contains(_dt):
+                return True
+        return False
+
+    def __str__(self):
+        ranges_str = ', '.join([str(r) for r in self.ranges])
+        return f"{self.name}: [{ranges_str}]"
+
+    def __repr__(self):
+        return self.__str__()
+
+
+class Folder:
+    def __init__(self, name: str, parent_path: str, zones: deque[list[ZoneRange]]):
+        self.name: str = name
+        self.path: str = cast(str, os.path.join(parent_path, name))
+        self.zones: deque[list[ZoneRange]] = zones
+        self.sub_folders: list[Self] = []  # 存储子文件夹的列表
+
+    def add_subfolder(self, subfolder_data: dict, zones: deque[list[ZoneRange]]=None) -> None:
+        """递归创建子文件夹，并将父文件夹的时区信息传递给子文件夹"""
+        subfolder = Folder.create_from_data(subfolder_data, self.path, zones)
+
+        self.sub_folders.append(subfolder)
+
+    @classmethod
+    def create_from_data(cls, folder_data: dict, parent_path: str = '', parent_zones: deque[list[ZoneRange]] = None) -> Self:
+        """根据提供的数据创建 Folder 对象，并结合父文件夹的时区信息"""
+        if parent_zones is None:
+            parent_zones = deque()
+
+        zones = [ZoneRange(zone['name'], zone.get('ranges'), zone.get('save_as')) for zone in folder_data.get('tz', [])]
+        combined_zones = parent_zones.copy()  # 使用 copy() 而不是 deepcopy()，因为 zones 是 ZoneRange 的实例，不需要深拷贝
+        if len(zones) != 0:
+            combined_zones.appendleft(zones)
+        folder = cls(folder_data['name'], parent_path, combined_zones)
+
+        # 处理子文件夹的递归
+        for sub_folder_data in folder_data.get('folder', []):
+            folder.add_subfolder(sub_folder_data, combined_zones)
+
+        return folder
+
+    def get_zone_range(self, dt: datetime) -> ZoneRange:
+        """
+        根据指定时间查找适用的时区范围
+        """
+        for zone in self.zones:
+            for zone_range in zone:
+                if zone_range.matches(dt):
+                    return zone_range
+        raise ValueError('no zone range')
+
+    def convert_to_zone(self, dt: datetime) -> datetime:
+        """
+        根据指定的时间和时区，转换到正确的时区
+        """
+        zone_range = self.get_zone_range(dt)
+
+        # 如果 datetime 没有时区信息，则假设是当前时区
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=ZoneInfo(zone_range.name))
+        # 如果时区范围没有指定保存时转换为的时区，则使用当前时区
+        else:
+            dt = dt.astimezone(ZoneInfo(zone_range.name))
+
+        # 如果指定了保存时转换为的时区，则转换为该时区
+        if zone_range.save_as:
+            dt = dt.astimezone(ZoneInfo(zone_range.save_as))
+
+        return dt
+
+    def zones_str(self):
+        return ', '.join([str(zones) for zones in self.zones])
+
+    def __iter__(self):
+        """递归遍历文件夹及其子文件夹"""
+        yield self
+        for subfolder in self.sub_folders:
+            yield from subfolder
+
+
+def load_config(config_file: str = 'folders.yaml') -> Folder:
     with open(config_file, 'r', encoding='utf-8') as f:
         folders = yaml.load(f, Loader=yaml.FullLoader)
 
-    res = []
-
-    def dfs(folder, parent_path=''):
-        if 'folder' not in folder:
-            # if os.path.exists(parent_path) and os.path.isdir(parent_path):
-            #     res.append(parent_path)
-            # else:
-            #     print(f'{parent_path} not exists or not a folder')
-            return
-        for sub_folder in folder['folder']:
-            res.append(os.path.join(parent_path, sub_folder['name']))
-            dfs(sub_folder, os.path.join(parent_path, sub_folder['name']))
-
-    dfs(folders)
-
-    return res
+    return Folder.create_from_data(folders.get('folder', [])[0])
 
 
 def get_metadata(file: nt.DirEntry):
     with exiftool.ExifTool() as et:
         metadata = et.get_metadata(file.path)
         return metadata
+
+
+def get_image_time(file: nt.DirEntry) -> datetime:
+    """
+    获取图片文件的拍摄时间：
+    - 优先 EXIF 中的 DateTimeOriginal + OffsetTimeOriginal
+    - fallback: 使用文件系统修改时间（mtime），不要带时区，因为时间似乎是对的，只是时区是本地时区。后面判断出时区后替换掉时区即可
+    """
+    with exiftool.ExifTool() as et:
+        date_time_original = et.get_tag("EXIF:DateTimeOriginal", file.path)
+        offset_time_original = et.get_tag("EXIF:OffsetTimeOriginal", file.path)
+
+        if date_time_original and offset_time_original:
+            # 有时区偏移 → 拼接并用 %z 解析
+            dt_str = f"{date_time_original} {offset_time_original}"
+            dt = datetime.strptime(dt_str, '%Y:%m:%d %H:%M:%S %z')
+
+            return dt
+
+        # fallback: 使用文件修改时间
+        mtime = os.path.getmtime(file.path)
+        return datetime.fromtimestamp(mtime)
+
+
+def get_media_time(file: nt.DirEntry) -> datetime:
+    """
+    获取媒体文件的拍摄时间
+    """
+    if file.name.endswith(img_suffix):
+        return get_image_time(file)
+    else:
+        # 对于其他类型的文件，直接使用 mtime
+        mtime = os.path.getmtime(file.path)
+        return datetime.fromtimestamp(mtime)
+
+
+def get_mtime(file: nt.DirEntry) -> datetime:
+    """
+    获取图片的修改时间（UTC）：
+    - 若有 EXIF 中的 DateTimeOriginal + OffsetTimeOriginal，则解析并转为 UTC。
+    - 否则使用文件系统的 mtime
+    """
+    with exiftool.ExifTool() as et:
+        date_time_original = et.get_tag("EXIF:DateTimeOriginal", file.path)
+        offset_time_original = et.get_tag("EXIF:OffsetTimeOriginal", file.path)
+
+    if date_time_original and offset_time_original:
+        # 解析 EXIF 中的时间
+        dt_str = f"{date_time_original} {offset_time_original}"
+        dt = datetime.strptime(dt_str, '%Y:%m:%d %H:%M:%S %z')
+        return dt.astimezone(timezone.utc)
+    else:
+        # 使用文件系统的修改时间
+        mtime = os.stat(file.path).st_mtime
+        return datetime.fromtimestamp(mtime, tz=timezone.utc)
 
 
 def is_live_photo(file: nt.DirEntry):
@@ -219,6 +402,20 @@ def cr3_to_jpg(file: nt.DirEntry):
             os.utime(filename, (file.stat().st_atime, file.stat().st_mtime))
 
         os.remove(file.path)
+
+
+def has_unique_suffix(file_entry_list: list[nt.DirEntry]) -> bool:
+    """
+    检查文件列表中的文件名是否有唯一的后缀。
+    如果存在两个相同的后缀，则返回 False
+    """
+    suffixes = set()
+    for file_entry in file_entry_list:
+        suffix = Path(file_entry.name).suffix.lower()
+        if suffix in suffixes:
+            return False
+        suffixes.add(suffix)
+    return True
 
 
 if __name__ == '__main__':

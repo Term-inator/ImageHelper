@@ -8,6 +8,12 @@ folders.yaml 为文件夹配置文件，格式如下：
 
 ```yaml
 folder:
+    tz: 
+      - name: xxx # 按什么时区读取，如果没有 save_as，就按该时区保存
+        range: # optional
+          - from: xxx
+            to: xxx
+        save_as: xxx # optional 保存为什么时区
     name: xxx
     folder:
       name: xxx
