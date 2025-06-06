@@ -1,6 +1,6 @@
-import json
 import nt
 import os
+import json
 
 import imagehash
 import matplotlib.pyplot as plt
@@ -31,11 +31,6 @@ def save_cache(cache_file='cache.json', cache=None):
     print(f'Cache saved to {cache_file}')
 
 
-# LSH 初始化（阈值 0.8，允许一定误差）
-lsh = MinHashLSH(threshold=0.8, num_perm=128)
-hash_db = {}  # 存储 pHash 值
-
-
 # 计算 pHash
 def compute_phash(image_entry):
     try:
@@ -48,20 +43,13 @@ def compute_phash(image_entry):
     return hash
 
 
-def get_phash(image_entry, cache):
-    cached = False
-    if image_entry.name in cache:
-        cached = True
-        return cache[image_entry.name], cached
-    phash = compute_phash(image_entry)
-    cache[image_entry.name] = phash
-    return phash, cached
-
-
 # pHash 转 MinHash（用于 LSH 近似搜索）
 def hash_to_minhash(phash):
+    # 将 pHash 转为 bit 串，例如 64 位二进制
     bit_hash = [int(b) for b in bin(int(str(phash), 16))[2:].zfill(64)]
     m = MinHash(num_perm=128)
+
+    # 把每一位 bit 的位置当作“token”，插入 MinHash
     for i, bit in enumerate(bit_hash):
         if bit:
             m.update(str(i).encode('utf8'))
@@ -73,33 +61,38 @@ def hamming_distance(hash1, hash2):
     return bin(int(hash1, 16) ^ int(hash2, 16)).count('1')
 
 
-def query_similar_images(image_entries: [nt.DirEntry], cache, compare_old_images=False):
-    # compare_old_images: False 旧图之间不比较
-    # 计算 pHash 和 MinHash，并插入 LSH
-    print('Computing pHash and MinHash...')
-    old_images_set = set()
-    for entry in image_entries:
-        phash, cached = get_phash(entry, cache)
-        if not compare_old_images and cached:
-            old_images_set.add(entry)
-            continue
-        mhash = hash_to_minhash(phash)
-        hash_db[entry] = phash
-        lsh.insert(entry, mhash)
+# LSH 初始化（阈值 0.8，允许一定误差）
+lsh = MinHashLSH(threshold=0.8, num_perm=128)
 
+
+def query_similar_images(folders: utils.Folder, phash_db: dict[str, str]):
     # 记录已处理的图片
     print('Querying similar images...')
     checked_images = set()
-    similar_groups: [(nt.DirEntry, int)] = []
+    similar_groups: list[tuple[nt.DirEntry, int]] = []
+    image_entries: list[nt.DirEntry] = []
+
+    for folder in folders:
+        print(f'path: {folder.path}')
+        batch_num = 0
+        for batch in utils.load_media_batch(folder.path, 64, media_type=utils.MediaType.all_image(), all_files=True):
+            for entry in batch:
+                image_entries.append(entry)
+                relative_path = folders.get_relative_path(entry.path)
+                phash = phash_db[relative_path]
+                mhash = hash_to_minhash(phash)
+                lsh.insert(entry, mhash)
+
+            batch_num += 1
 
     # 查找相似图片
     for entry in image_entries:
-        if not compare_old_images and entry in old_images_set:
-            continue
         if entry in checked_images:
             continue
 
-        query_minhash = hash_to_minhash(hash_db[entry])
+        relative_path = folders.get_relative_path(entry.path)
+
+        query_minhash = hash_to_minhash(phash_db[relative_path])
         candidates = lsh.query(query_minhash)  # LSH 近似匹配
 
         # 进一步用 pHash 计算哈明距离
@@ -108,8 +101,8 @@ def query_similar_images(image_entries: [nt.DirEntry], cache, compare_old_images
 
         for candidate in candidates:
             if candidate != entry and candidate not in checked_images:
-                dist = hamming_distance(hash_db[entry], hash_db[candidate])
-                if dist <= 2:  # 设定 pHash 相似度阈值
+                dist = hamming_distance(phash_db[relative_path], phash_db[folders.get_relative_path(candidate.path)])
+                if dist <= 2:  # 设定 pHash 相似度阈值， 一般用 2
                     similar_images.append((candidate, dist))
                     checked_images.add(candidate)
 
@@ -155,26 +148,70 @@ def remove_similar_images(folder, similar_images):
                 utils.del_image(image_entry_lst[int(rm)][0])
 
 
-# run after rename.py !!!!!!!!
-if __name__ == '__main__':
-    folder = r"D:\csc\Pictures\All"
-    cache_file = f'{folder}\\cache.json'
+def export_similar_images(folder, similar_images):
+    with open(f'{folder}\\similar_images.txt', 'w') as f:
+        for image_entry_lst in similar_images:
+            for image_entry, diff in image_entry_lst:
+                f.write(f'{image_entry.path}\n')
+            f.write('\n')
+
+
+def generate_cache(folders: utils.Folder, save_interval=10):
+    """
+    :param folders: utils.Folder 对象，包含所有需要处理的文件夹
+    :param save_interval: 几批次保存一次缓存
+    """
+    cache_file = f'{folders.path}\\cache.json'
     cache = load_cache(cache_file)  # 加载缓存
-    # folder = r"D:\csc\Pictures\test"
-    image_entries = utils.load_images(folder)
 
-    try:
-        similar_images = query_similar_images(image_entries, cache, compare_old_images=True)
-    except Exception:
-        save_cache(cache_file, cache)  # 保存缓存
-        raise
+    phash_db: dict[str, str] = {}  # 存储文件路径和对应的 pHash
 
-    cached_images = set(cache.keys())
-    all_images = set([entry.name for entry in image_entries])
-    # 删除已删除的图片
-    for image in cached_images - all_images:
-        del cache[image]
+    batch_processed = 0  # 处理的批次数
+
+    for folder in folders:
+        print(f'path: {folder.path}')
+        batch_num = 0
+        for batch in utils.load_media_batch(folder.path, 64, media_type=utils.MediaType.all_image(), all_files=True):
+            print(f'batch {batch_num}, size {len(batch)}')
+
+            all_cached = True
+            for entry in batch:
+                relative_path = folders.get_relative_path(entry.path)
+                print(relative_path)
+                # 如果路径在缓存中，直接使用缓存的 pHash
+                if relative_path in cache:
+                    phash = cache[relative_path]
+                # 如果缓存中没有，计算 pHash 并存入缓存
+                else:
+                    all_cached = False
+                    phash = compute_phash(entry)
+                    cache[relative_path] = phash
+
+                phash_db[relative_path] = phash
+
+            batch_num += 1
+            if not all_cached:
+                batch_processed += 1
+
+            if batch_processed != 0 and batch_processed % save_interval == 0:
+                print(f'Saving cache after {batch_processed} batches...')
+                save_cache(cache_file, cache)
 
     save_cache(cache_file, cache)  # 保存缓存
+
+    return phash_db
+
+
+# run after rename.py !!!!!!!!
+# 因为 rename 会给 live 图赋予相同的名字，便于 similarity 里一起删除
+if __name__ == '__main__':
+    folders = utils.load_config('folders.yaml')
+
+    phash_db = generate_cache(folders, save_interval=10)
+
+    similar_images = query_similar_images(folders, phash_db)
+    # TODO 删除已经被删除的图片的 cache
+
     print(f'Found {len(similar_images)} similar groups')
-    remove_similar_images(folder, similar_images)
+    remove_similar_images(folders.path, similar_images)
+    # export_similar_images(folder, similar_images)

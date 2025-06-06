@@ -21,6 +21,7 @@ video_suffix = ('.mp4', '.MP4', '.mov', '.MOV', '.avi', '.AVI', '.m4v', '.M4V', 
 raw_img_suffix = ('.CR3', '.cr3', '.NEF', '.nef', '.ARW', '.arw', '.RAF', '.raf', '.RW2', '.rw2', '.ORF', '.orf', '.SRW', '.srw', '.PEF', '.pef', '.CR2', '.cr2', '.DNG', '.dng')
 
 
+# 建议使用 load_media_batch
 def load_images(folder):
     images: [nt.DirEntry] = []
 
@@ -50,9 +51,60 @@ def load_media(folder):
     return files
 
 
-def load_media_batch(folder, batch_size=64, all_files=False):
+class MediaType(Enum):
+    IMAGE = 'image'
+    VIDEO = 'video'
+    RAW_IMAGE = 'raw_image'
+    UNKNOWN = 'unknown'
+
+    @classmethod
+    def from_filename(cls, filename: str):
+        if filename.lower().endswith(img_suffix):
+            return cls.IMAGE
+        elif filename.lower().endswith(video_suffix):
+            return cls.VIDEO
+        elif filename.lower().endswith(raw_img_suffix):
+            return cls.RAW_IMAGE
+        else:
+            return cls.UNKNOWN
+
+    @classmethod
+    def get_suffix_list(cls, media_type: list[Self]):
+        """
+        根据媒体类型列表返回对应的文件后缀列表
+        """
+        suffix_list = []
+        for m_type in media_type:
+            if m_type == cls.IMAGE:
+                suffix_list.extend(img_suffix)
+            elif m_type == cls.VIDEO:
+                suffix_list.extend(video_suffix)
+            elif m_type == cls.RAW_IMAGE:
+                suffix_list.extend(raw_img_suffix)
+        return tuple(suffix_list)
+
+
+    @classmethod
+    def all_media(cls):
+        return [cls.IMAGE, cls.VIDEO, cls.RAW_IMAGE]
+
+    @classmethod
+    def all_image(cls):
+        return [cls.IMAGE, cls.RAW_IMAGE]
+
+
+def load_media_batch(folder: str, batch_size : int = 64, media_type : list[MediaType] = None, all_files: bool = False):
+    """
+    批量加载媒体文件，返回一个生成器，每次返回一个 batch 的媒体文件列表。
+    :param folder: 文件夹路径
+    :param batch_size: 每个 batch 的大小
+    :param media_type: 媒体类型列表，默认为 None，表示加载所有类型的媒体文件
+    :param all_files: 是否加载所有文件，False 时不加载已经处理过的文件（存放于 year/month 文件夹下）
+    """
     # all_files: 是否加载所有文件，False 时不加载已经处理过的文件（存放于 year/month 文件夹下）
-    suffix = img_suffix + video_suffix + raw_img_suffix
+    if media_type is None:
+        media_type = MediaType.all_media()
+    suffix = MediaType.get_suffix_list(media_type)
     batch = []
 
     def yield_batches():
@@ -70,12 +122,12 @@ def load_media_batch(folder, batch_size=64, all_files=False):
                 if re.match(r'\d{4}', file_entry.name):
                     year = re.match(r'\d{4}', file_entry.name).group()
                     subfolder = os.path.join(folder, year)
-                    for sub_batch in load_media_batch(subfolder, batch_size, all_files):
+                    for sub_batch in load_media_batch(subfolder, batch_size, media_type, all_files):
                         batch.extend(sub_batch)
                 elif re.match(r'\d{2}', file_entry.name):
                     month = re.match(r'\d{2}', file_entry.name).group()
                     subfolder = os.path.join(folder, month)
-                    for sub_batch in load_media_batch(subfolder, batch_size, all_files):
+                    for sub_batch in load_media_batch(subfolder, batch_size, media_type, all_files):
                         batch.extend(sub_batch)
             elif file_entry.is_file() and file_entry.name.endswith(suffix):
                 batch.append(file_entry)  # 直接存储 DirEntry 对象
@@ -261,6 +313,17 @@ class Folder:
 
         return dt
 
+    def get_relative_path(self, path: str) -> str:
+        """
+        获取相对于该文件夹的路径
+        :param path: 绝对路径或相对路径
+        :return: 相对于该文件夹的路径
+        """
+        if not path.startswith(self.path):
+            raise ValueError(f"Path {path} is not under folder {self.path}")
+
+        return os.path.relpath(path, self.path)
+
     def zones_str(self):
         return ', '.join([str(zones) for zones in self.zones])
 
@@ -351,12 +414,6 @@ def get_content_uuid(file: nt.DirEntry):
         return uuid
 
 
-class FileType(Enum):
-    IMAGE = 0
-    VIDEO = 1
-    LIVE_PHOTO = 2
-
-
 # before rename, get the file map
 def get_file_entry_map(entries: [nt.DirEntry]):
     # entries: entry list under the same folder
@@ -385,23 +442,48 @@ def get_file_entry_map(entries: [nt.DirEntry]):
     return file_entry_map
 
 
-def cr3_to_jpg(file: nt.DirEntry):
-    # 曝光和亮度太难调，用 rawpy 读取的结果颜色有偏差，所以暂时选择直接提取缩略图
-    if file.name.endswith(('CR3', 'cr3')):
-        with rawpy.imread(file.path) as raw:
-            thumbnail = raw.extract_thumb()
+def raw_to_jpg(file: nt.DirEntry, thumbnail: bool = False):
+    """
+    将原始图像文件转换为 JPG 文件。
+    如果 thumbnail 为 True，则提取缩略图，否则使用 rawpy 读取并处理。
+    """
+    if file.name.endswith(raw_img_suffix):
+        if thumbnail:
+            # 提取缩略图
+            with rawpy.imread(file.path) as raw:
+                thumbnail = raw.extract_thumb()
 
-        filename = file.path.replace('.CR3', '.jpg').replace('.cr3', '.jpg')
+            filename = file.path.replace(Path(file.name).suffix, '.jpg')
 
-        if thumbnail.format == rawpy.ThumbFormat.JPEG:
-            # 'thumbnail.data' is the full JPEG buffer
-            with open(filename, 'wb') as f:
-                f.write(thumbnail.data)
+            if thumbnail.format == rawpy.ThumbFormat.JPEG:
+                # 'thumbnail.data' is the full JPEG buffer
+                with open(filename, 'wb') as f:
+                    f.write(thumbnail.data)
+        else:
+            with rawpy.imread(file.path) as raw:
+                # 后处理为 RGB 图像
+                rgb = raw.postprocess()
 
-            # 设置修改时间为原文件的修改时间
-            os.utime(filename, (file.stat().st_atime, file.stat().st_mtime))
+            # 使用 Pillow 将 RGB 图像保存为 JPG
+            filename = file.path.replace(Path(file.name).suffix, '.jpg')
+            img = Image.fromarray(rgb)
+
+            img = img.convert('RGB')  # 转换为 RGB 模式
+            img.save(filename)
+
+        # 提取原始文件的 EXIF 和 XMP 元数据，使用 exiftool
+        with exiftool.ExifTool() as et:
+            et.execute(
+                "-overwrite_original".encode('utf-8'),
+                f"-TagsFromFile={file.path}".encode('utf8'),
+                os.path.join(os.path.dirname(file.path), filename).encode('utf8'),
+            )
+
+        # 设置修改时间为原文件的修改时间
+        os.utime(filename, (file.stat().st_atime, file.stat().st_mtime))
 
         os.remove(file.path)
+
 
 
 def has_unique_suffix(file_entry_list: list[nt.DirEntry]) -> bool:
@@ -419,7 +501,7 @@ def has_unique_suffix(file_entry_list: list[nt.DirEntry]) -> bool:
 
 
 if __name__ == '__main__':
-    folder = r'D:\csc\Pictures\Saved Pictures\newmexico'
+    folder = r"D:\csc\Pictures\All\旅行\Arizona\Page\Antelope Canyon\2024\04"
     for batch in load_media_batch(folder, 64):
         for file_entry in batch:
-            cr3_to_jpg(file_entry)
+            raw_to_jpg(file_entry, thumbnail=True)
