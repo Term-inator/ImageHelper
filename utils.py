@@ -500,6 +500,27 @@ def has_unique_suffix(file_entry_list: list[nt.DirEntry]) -> bool:
     return True
 
 
+def file_size_to_str(file_size: int) -> str:
+    """
+    将文件大小转换为字符串表示，保留四位小数，单位为 B、KB 或 MB
+    """
+    units = ['B', 'KB', 'MB']
+    for unit in units:
+        if file_size < 1024:
+            return f'{file_size:.4f}{unit}'
+        file_size /= 1024
+
+    return f'{file_size:.4f}{units[-1]}'
+
+
+def get_image_raw_size(image_entry: nt.DirEntry) -> int:
+    """
+    获取图片字节数（宽 * 高 * 通道数）
+    """
+    image = Image.open(image_entry.path)
+    return image.size[0] * image.size[1] * len(image.getbands())
+
+
 if __name__ == '__main__':
     folder = r"D:\csc\Pictures\All\旅行\Arizona\Page\Antelope Canyon\2024\04"
     for batch in load_media_batch(folder, 64):

@@ -27,3 +27,14 @@ folder:
 ```
 
 utime.py 为修改文件夹和文件修改时间的脚本
+
+
+## bash 脚本
+```bash
+sudo apt install fd-find imagemagick
+```
+
+
+## TODO
+用数据库存下没删除的相似文件
+用mime判断文件类型

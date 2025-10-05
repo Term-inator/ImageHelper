@@ -67,6 +67,7 @@ def rename(folder, file_entry_map: dict[str, list[nt.DirEntry]]):
             if media_format not in unsupported_format:
                 os.rename(file_entry.path, os.path.join(new_folder_path, new_name_with_suffix))
             else:
+                # TODO 转移元数据用 utils.dng_to_jpg 里的方法
                 with Image.open(file_entry.path) as img:
                     exif_data = img.info.get('exif')
                 # 保留 exif 数据
@@ -135,7 +136,7 @@ if __name__ == '__main__':
             '': []  # files without UUID
         }  # UUID: [file1, file2, ...]
         batch_num = 0
-        for batch in utils.load_media_batch(folder.path, 64, all_files=True):
+        for batch in utils.load_media_batch(folder.path, 64, media_type=utils.MediaType.all_media(), all_files=False):
             print(f'batch {batch_num}, size {len(batch)}')
             file_entry_map_batch = utils.get_file_entry_map(batch)
             for uuid, files in file_entry_map_batch.items():

@@ -113,9 +113,30 @@ def query_similar_images(folders: utils.Folder, phash_db: dict[str, str]):
     return similar_groups
 
 
-def remove_similar_images(folder, similar_images):
+def remove_similar_images(folder, similar_images, fast_del=False):
     for image_entry_lst in similar_images:
         n = len(image_entry_lst)
+
+        if fast_del:
+            fast_del_list = []
+            for index, (image_entry, diff) in enumerate(image_entry_lst):
+                # diff 为 0 的图片，如果不是第一张，直接加入删除列表
+                if diff == 0:
+                    fast_del_list.append(index)
+                    continue
+
+            fast_del_list.sort(key=lambda i: os.path.getsize(image_entry_lst[i][0].path), reverse=True)
+            max_file_index = fast_del_list.pop(0)  # 留下一张体积最大，且日期最旧的图片。虽然有元数据影响文件大小，但对于大图片来说可以忽略
+
+            # 重复的图片都可以删除
+            if len(fast_del_list) == n - 1:
+                print(f'file sizes are {[utils.file_size_to_str(os.path.getsize(image_entry.path)) for image_entry, diff in image_entry_lst]}')
+                print(f'keep file {max_file_index}, size {utils.file_size_to_str(os.path.getsize(image_entry_lst[max_file_index][0].path))}')
+                print()
+                for rm in fast_del_list:
+                    utils.del_image(image_entry_lst[int(rm)][0])
+                continue
+
         # 展示全部图片，一行两张
         fig = plt.figure(figsize=(20, 14))
         for index, (image_entry, diff) in enumerate(image_entry_lst):
@@ -131,21 +152,24 @@ def remove_similar_images(folder, similar_images):
             # 过长换行
             if len(path_display) > 50:
                 path_display = path_display[:50] + '\n' + path_display[50:]
-            plt.title(f'{path_display} \n diff:{diff} index:{index}', fontsize=20)
+            plt.title(f'{path_display} \n diff:{diff} index:{index} \n size:{utils.file_size_to_str(os.path.getsize(image_entry.path))}', fontsize=20)
         plt.show(block=False)
-        # 获取 Tkinter 窗口并修改属性
-        rm_lst = input('remove list: ')
 
-        if rm_lst == 'n':  # 不删除
+        rm_lst = input('remove list: ')
+        if rm_lst == 'n':  # 'n' 表示不删除
+            plt.close()
             continue
+
         rm_lst = rm_lst.split()
         for rm in rm_lst:
             utils.del_image_dry_run(image_entry_lst[int(rm)][0])
         confirm = input('confirm? (Y/n): ')
-        plt.close()
+
         if confirm != 'n' and confirm != 'N':
             for rm in rm_lst:
                 utils.del_image(image_entry_lst[int(rm)][0])
+
+        plt.close()
 
 
 def export_similar_images(folder, similar_images):
@@ -213,5 +237,5 @@ if __name__ == '__main__':
     # TODO 删除已经被删除的图片的 cache
 
     print(f'Found {len(similar_images)} similar groups')
-    remove_similar_images(folders.path, similar_images)
+    remove_similar_images(folders.path, similar_images, fast_del=False)
     # export_similar_images(folder, similar_images)
